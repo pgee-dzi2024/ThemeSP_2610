@@ -1,10 +1,245 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="bg">
 <head>
     <meta charset="UTF-8">
-    <title>Title</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Batch Image Processor - Дипломен проект</title>
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- Axios -->
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
 </head>
-<body>
-<h1>Свали си html шаблон!</h1>
+<body class="bg-light">
+
+<div id="app" class="container py-5">
+    <div class="row mb-4">
+        <div class="col text-center">
+            <h1 class="display-5 fw-bold">Batch Image Processor</h1>
+            <p class="lead">Конвертиране, оразмеряване (Full HD) и добавяне на воден знак</p>
+        </div>
+    </div>
+
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card shadow-sm">
+                <div class="card-body">
+
+                    <!-- Форма за настройки -->
+                    <form @submit.prevent="processImages">
+
+                        <!-- Избор на файлове -->
+                        <div class="mb-4">
+                            <label class="form-label fw-bold">1. Изберете изображения (JPG, PNG)</label>
+                            <input type="file" class="form-control" multiple accept=".jpg,.jpeg,.png" @change="handleFileSelect" required>
+                            <div class="form-text">
+                                Избрани файлове: <span class="badge bg-primary">[[ files.length ]]</span>
+                            </div>
+                        </div>
+
+                        <!-- Настройки за оразмеряване -->
+                        <div class="mb-4">
+                            <label class="form-label fw-bold">2. Режим на оразмеряване (Full HD - 1920x1080)</label>
+                            <select class="form-select" v-model="settings.resizeMode">
+                                <option value="fit">Вписване със запазване на пропорциите (Fit)</option>
+                                <option value="pad">Добавяне на бял фон (Pad)</option>
+                                <option value="crop">Изрязване за запълване (Crop)</option>
+                            </select>
+                        </div>
+
+                        <!-- Настройки за воден знак -->
+                        <div class="mb-4">
+                            <label class="form-label fw-bold">3. Воден знак</label>
+
+                            <!-- Избор на тип -->
+                            <div class="mb-3">
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input" type="radio" v-model="settings.watermarkType" value="none" id="wmNone">
+                                    <label class="form-check-label" for="wmNone">Без воден знак</label>
+                                </div>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input" type="radio" v-model="settings.watermarkType" value="text" id="wmText">
+                                    <label class="form-check-label" for="wmText">Текст</label>
+                                </div>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input" type="radio" v-model="settings.watermarkType" value="logo" id="wmLogo">
+                                    <label class="form-check-label" for="wmLogo">Лого (Изображение)</label>
+                                </div>
+                            </div>
+
+                            <!-- Поле за текст -->
+                            <div v-if="settings.watermarkType === 'text'" class="mb-2">
+                                <input type="text" class="form-control" v-model="settings.watermarkText" placeholder="Въведете текст...">
+                            </div>
+
+                            <!-- Поле за лого -->
+                            <div v-if="settings.watermarkType === 'logo'" class="mb-2">
+                                <input type="file" class="form-control" accept=".png,.jpg" @change="handleLogoSelect">
+                                <small class="text-muted">Препоръчително е логото да е във формат PNG с прозрачен фон.</small>
+                            </div>
+
+                            <!-- Позиция (показва се само ако е избран текст или лого) -->
+                            <select v-if="settings.watermarkType !== 'none'" class="form-select mt-2" v-model="settings.watermarkPosition">
+                                <option value="bottom-right">Долу вдясно</option>
+                                <option value="center">В центъра</option>
+                                <option value="top-left">Горе вляво</option>
+                            </select>
+
+                            <!-- Плъзгач за прозрачност (показва се само ако е избран текст или лого) -->
+                            <div v-if="settings.watermarkType !== 'none'" class="mt-3">
+                                <label class="form-label">
+                                    Прозрачност на водния знак: <strong>[[ settings.watermarkOpacity ]]%</strong>
+                                </label>
+                                <input type="range" class="form-range" v-model="settings.watermarkOpacity" min="10" max="100" step="5">
+                                <div class="d-flex justify-content-between text-muted" style="font-size: 0.8rem;">
+                                    <span>По-прозрачно</span>
+                                    <span>Плътно</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Съобщения за грешки -->
+                        <div v-if="errorMessage" class="alert alert-danger">
+                            [[ errorMessage ]]
+                        </div>
+
+                        <!-- Бутон за изпращане -->
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-success btn-lg" :disabled="isProcessing || files.length === 0">
+                                <span v-if="isProcessing" class="spinner-border spinner-border-sm me-2" role="status"></span>
+                                <span v-if="!isProcessing">Обработи и изтегли ZIP</span>
+                                <span v-else>Обработка... Моля изчакайте</span>
+                            </button>
+                        </div>
+
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const { createApp } = Vue;
+
+    createApp({
+        // Променяме делиметрите на Vue, за да не се бъркат с тези на Django шаблоните
+        compilerOptions: {
+            delimiters: ['[[', ']]']
+        },
+        data() {
+            return {
+                files: [],
+                settings: {
+                    resizeMode: 'fit',
+                    watermarkType: 'none', // Нов запис ('none', 'text', 'logo')
+                    watermarkText: '',
+                    watermarkPosition: 'bottom-right',
+                    watermarkOpacity: 50 // НОВО: По подразбиране на 50%
+                },
+                isProcessing: false,
+                errorMessage: ''
+            }
+        },
+        methods: {
+            handleLogoSelect(event) {
+                if (event.target.files.length > 0) {
+                    this.logoFile = event.target.files[0];
+                } else {
+                    this.logoFile = null;
+                }
+            },
+            handleFileSelect(event) {
+                // Прехвърляме избраните файлове в масив
+                this.files = Array.from(event.target.files);
+                this.errorMessage = '';
+            },
+
+            // Функция за взимане на CSRF токена от бисквитките (нужно за Django POST заявки)
+            getCSRFToken() {
+                let cookieValue = null;
+                if (document.cookie && document.cookie !== '') {
+                    const cookies = document.cookie.split(';');
+                    for (let i = 0; i < cookies.length; i++) {
+                        const cookie = cookies[i].trim();
+                        if (cookie.substring(0, 10) === ('csrftoken=')) {
+                            cookieValue = decodeURIComponent(cookie.substring(10));
+                            break;
+                        }
+                    }
+                }
+                return cookieValue;
+            },
+
+            async processImages() {
+                if (this.files.length === 0) return;
+
+                this.isProcessing = true;
+                this.errorMessage = '';
+
+                // Подготвяме данните за изпращане (Multipart Form Data)
+                const formData = new FormData();
+                this.files.forEach(file => {
+                    formData.append('images', file); // Ключът 'images' съвпада с този във views.py
+                });
+
+
+                formData.append('resize_mode', this.settings.resizeMode);
+                formData.append('watermark_type', this.settings.watermarkType);
+                formData.append('watermark_position', this.settings.watermarkPosition);
+                formData.append('watermark_opacity', this.settings.watermarkOpacity); // НОВО
+
+                // Добавяме текст или лого според избора
+                if (this.settings.watermarkType === 'text') {
+                    formData.append('watermark_text', this.settings.watermarkText);
+                } else if (this.settings.watermarkType === 'logo' && this.logoFile) {
+                    formData.append('watermark_logo', this.logoFile);
+                }
+
+                try {
+                    // Изпращаме заявката
+                    const response = await axios.post('/api/process/', formData, {
+                        headers: {
+                            'Content-Type': 'multipart/form-data',
+                            'X-CSRFToken': this.getCSRFToken() // Защита на Django
+                        },
+                        responseType: 'blob' // ИЗКЛЮЧИТЕЛНО ВАЖНО: Казваме на Axios, че очакваме бинарен файл (ZIP), а не JSON
+                    });
+
+                    // Създаваме временен линк за изтегляне на получения ZIP файл
+                    const blob = new Blob([response.data], { type: 'application/zip' });
+                    const downloadUrl = window.URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = downloadUrl;
+                    link.setAttribute('download', 'batch_processed_images.zip'); // Име на изтегления файл
+                    document.body.appendChild(link);
+                    link.click();
+
+                    // Изчистване
+                    link.parentNode.removeChild(link);
+                    window.URL.revokeObjectURL(downloadUrl);
+
+                } catch (error) {
+                    console.error(error);
+                    this.errorMessage = 'Възникна грешка при комуникацията със сървъра или обработката на файловете.';
+
+                    // Ако сървърът е върнал JSON грешка вътре в blob-а
+                    if (error.response && error.response.data && error.response.data.type === 'application/json') {
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                            const errorData = JSON.parse(reader.result);
+                            this.errorMessage = errorData.error || 'Грешка при обработката.';
+                        };
+                        reader.readAsText(error.response.data);
+                    }
+                } finally {
+                    this.isProcessing = false;
+                }
+            }
+        }
+    }).mount('#app');
+</script>
+
 </body>
 </html>
